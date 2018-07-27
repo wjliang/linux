@@ -293,11 +293,56 @@ static void *keystone_rproc_da_to_va(struct rproc *rproc, u64 da, int len)
 	return (__force void *)va;
 }
 
+/*
+ * Custom function to register platform specific memory region(s)
+ * before loading firmware resource table thanks to generic
+ * rproc_elf_load_rsc_table() function.
+ */
+static int keystone_rproc_parse_fw(struct rproc *rproc,
+				   const struct firmware *fw)
+{
+	struct device *dev = rproc->dev.parent;
+	struct rproc_mem_entry *mem;
+	struct device_node *node;
+	struct resource res;
+	int err;
+
+	node = of_parse_phandle(dev->of_node, "memory-region", 0);
+	if (!node) {
+		dev_warn(dev, "No memory-region specified\n");
+		goto out;
+	}
+
+	err = of_address_to_resource(node, 0, &res);
+	if (err) {
+		dev_err(dev, "Bad memory-region definition\n");
+		return err;
+	}
+
+	/* Register memory region for vdev buffer allocation */
+	mem = rproc_of_resm_mem_entry_init(dev, 0, resource_size(&res),
+					   res.start, "vdev0buffer");
+
+	if (!mem)
+		return -ENOMEM;
+
+	rproc_add_carveout(rproc, mem);
+
+out:
+	return rproc_elf_load_rsc_table(rproc, fw);
+}
+
 static const struct rproc_ops keystone_rproc_ops = {
-	.start		= keystone_rproc_start,
-	.stop		= keystone_rproc_stop,
-	.kick		= keystone_rproc_kick,
-	.da_to_va	= keystone_rproc_da_to_va,
+	.start			= keystone_rproc_start,
+	.stop			= keystone_rproc_stop,
+	.kick			= keystone_rproc_kick,
+	.da_to_va		= keystone_rproc_da_to_va,
+	.parse_fw		= keystone_rproc_parse_fw,
+	.load			= rproc_elf_load_segments,
+	.find_loaded_rsc_table	= rproc_elf_find_loaded_rsc_table,
+	.sanity_check		= rproc_elf_sanity_check,
+	.get_boot_addr		= rproc_elf_get_boot_addr,
+
 };
 
 static int keystone_rproc_of_get_memories(struct platform_device *pdev,
