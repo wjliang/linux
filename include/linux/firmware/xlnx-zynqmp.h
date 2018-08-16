@@ -32,6 +32,9 @@
 /* Number of 32bits values in payload */
 #define PAYLOAD_ARG_CNT	4U
 
+/* Request capability of a device node */
+#define	ZYNQMP_PM_CAPABILITY_ACCESS	0x1U
+
 enum zynqmp_pm_request_ack {
 	ZYNQMP_PM_REQUEST_ACK_NO = 1,
 	ZYNQMP_PM_REQUEST_ACK_BLOCKING,
