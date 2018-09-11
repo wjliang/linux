@@ -41,9 +41,6 @@
 #define RPU_0_IPI_MASK		RPU_IPI_MASK(0)
 #define RPU_1_IPI_MASK		RPU_IPI_MASK(1)
 
-/* PM proc states */
-#define PM_PROC_STATE_ACTIVE 1u
-
 /* Maximum TCM power nodes IDs */
 #define MAX_TCM_PNODES 4
 
