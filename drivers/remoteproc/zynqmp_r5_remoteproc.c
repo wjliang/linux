@@ -59,6 +59,7 @@ struct zynqmp_r5_rproc_pdata;
 /**
  * struct zynqmp_r5_rproc_pdata - zynqmp rpu remote processor instance state
  * @rproc: rproc handle
+ * @eemi: eemi operations
  * @workqueue: workqueue for the RPU remoteproc
  * @ipi_base: virt ptr to IPI channel address registers for APU
  * @rpu_mode: RPU core configuration
@@ -72,6 +73,7 @@ struct zynqmp_r5_rproc_pdata;
  */
 struct zynqmp_r5_rproc_pdata {
 	struct rproc *rproc;
+	const struct zynqmp_eemi_ops *eemi;
 	struct work_struct workqueue;
 	void __iomem *ipi_base;
 	enum rpu_oper_mode rpu_mode;
@@ -93,15 +95,11 @@ struct zynqmp_r5_rproc_pdata {
 static void r5_boot_addr_config(struct zynqmp_r5_rproc_pdata *pdata,
 				enum rpu_boot_mem bootmem)
 {
-	const struct zynqmp_eemi_ops *eemi = zynqmp_pm_get_eemi_ops();
+	const struct zynqmp_eemi_ops *eemi = pdata->eemi;
 
 	pr_debug("%s: R5 ID: %d, boot_dev %d\n",
 		 __func__, pdata->rpu_id, bootmem);
 
-	if (!eemi || !eemi->ioctl) {
-		pr_err("%s: no eemi ioctl operation.\n", __func__);
-		return;
-	}
 	eemi->ioctl(pdata->rpu_pnode_id, IOCTL_RPU_BOOT_ADDR_CONFIG,
 		    bootmem, 0, NULL);
 }
@@ -115,14 +113,10 @@ static void r5_boot_addr_config(struct zynqmp_r5_rproc_pdata *pdata,
  */
 static void r5_mode_config(struct zynqmp_r5_rproc_pdata *pdata)
 {
-	const struct zynqmp_eemi_ops *eemi = zynqmp_pm_get_eemi_ops();
+	const struct zynqmp_eemi_ops *eemi = pdata->eemi;
 
 	pr_debug("%s: mode: %d\n", __func__, pdata->rpu_mode);
 
-	if (!eemi || !eemi->ioctl) {
-		pr_err("%s: no eemi ioctl operation.\n", __func__);
-		return;
-	}
 	eemi->ioctl(pdata->rpu_pnode_id, IOCTL_SET_RPU_OPER_MODE,
 		    pdata->rpu_mode, 0, NULL);
 }
@@ -209,15 +203,9 @@ static int zynqmp_r5_rproc_start(struct rproc *rproc)
 	struct device *dev = rproc->dev.parent;
 	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
 	enum rpu_boot_mem bootmem;
-	const struct zynqmp_eemi_ops *eemi = zynqmp_pm_get_eemi_ops();
+	const struct zynqmp_eemi_ops *eemi = local->eemi;
 
 	dev_dbg(dev, "%s\n", __func__);
-
-	if (!eemi || !eemi->force_powerdown ||
-	    !eemi->request_wakeup) {
-		pr_err("Failed to start R5\n");
-		return -ENXIO;
-	}
 
 	/* Set up R5 */
 	if ((rproc->bootaddr & 0xF0000000) == 0xF0000000)
@@ -231,8 +219,6 @@ static int zynqmp_r5_rproc_start(struct rproc *rproc)
 	eemi->force_powerdown(local->rpu_pnode_id,
 			      ZYNQMP_PM_REQUEST_ACK_BLOCKING);
 	r5_boot_addr_config(local, bootmem);
-	/* Add delay before release from halt and reset */
-	usleep_range(400, 500);
 	eemi->request_wakeup(local->rpu_pnode_id,
 			     1, bootmem,
 			     ZYNQMP_PM_REQUEST_ACK_NO);
@@ -265,14 +251,9 @@ static int zynqmp_r5_rproc_stop(struct rproc *rproc)
 	struct device *dev = rproc->dev.parent;
 	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
 	struct rproc_mem_entry *mem, *nmem;
-	const struct zynqmp_eemi_ops *eemi = zynqmp_pm_get_eemi_ops();
+	const struct zynqmp_eemi_ops *eemi = local->eemi;
 
 	dev_dbg(dev, "%s\n", __func__);
-
-	if (!eemi || !eemi->force_powerdown) {
-		pr_err("Failed to stop R5\n");
-		return -ENXIO;
-	}
 
 	disable_ipi(local);
 	eemi->force_powerdown(local->rpu_pnode_id,
@@ -375,7 +356,7 @@ static int zynqmp_r5_get_tcms(struct platform_device *pdev,
 	struct property *prop;
 	const __be32 *cur;
 	u32 val;
-	const struct zynqmp_eemi_ops *eemi = zynqmp_pm_get_eemi_ops();
+	const struct zynqmp_eemi_ops *eemi = pdata->eemi;
 
 	/* Get TCM power node ids */
 	i = 0;
@@ -497,6 +478,37 @@ static int zynqmp_r5_get_reserved_mems(struct platform_device *pdev,
 	return 0;
 }
 
+/* zynqmp_r5_check_eemi_ops() - check if eemi operations defined
+ * @pdata: pointer to the remoteproc private data
+ *
+ * Function to check if the required eemi operations have been defined.
+ */
+static int zynqmp_r5_check_eemi_ops(struct zynqmp_r5_rproc_pdata *pdata)
+{
+	const struct zynqmp_eemi_ops *eemi = zynqmp_pm_get_eemi_ops();
+
+	pdata->eemi = NULL;
+	if (!eemi) {
+		pr_err("%s: missing required eemi operations\n", __func__);
+		return -ENXIO;
+	} else if (!eemi->request_node || !eemi->release_node) {
+		pr_err("%s: missing eemi request/release node operation\n",
+		       __func__);
+		return -ENXIO;
+	} else if (!eemi->wakeup || !eemi->force_shutdown) {
+		pr_err("%s: missing eemi wakeup/shutdown operation\n",
+		       __func__);
+		return -ENXIO;
+	} else if (!eemi->ioctl) {
+		pr_err("%s: missing eemi ioctl operation\n",
+		       __func__);
+		return -ENXIO;
+	} else {
+		pdata->eemi = eemi;
+		return 0;
+	}
+}
+
 static int zynqmp_r5_remoteproc_probe(struct platform_device *pdev)
 {
 	const unsigned char *prop;
@@ -516,6 +528,13 @@ static int zynqmp_r5_remoteproc_probe(struct platform_device *pdev)
 	local->rproc = rproc;
 
 	platform_set_drvdata(pdev, rproc);
+
+	/* Check platform management eemi operations */
+	ret = zynqmp_r5_check_eemi_ops(local);
+	if (ret) {
+		dev_err(&pdev->dev, "eemi ops not defined.\n");
+		goto rproc_fault;
+	}
 
 	/* Override parse_fw op to allow no resource table firmware */
 	rproc->ops->parse_fw = zynqmp_r5_parse_fw;
