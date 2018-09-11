@@ -305,20 +305,6 @@ static struct rproc_ops zynqmp_r5_rproc_ops = {
 	.da_to_va       = zynqmp_r5_rproc_da_to_va,
 };
 
-/* Release R5 from reset and make it halted.
- * In case the firmware uses TCM, in order to load firmware to TCM,
- * will need to release R5 from reset and stay in halted state.
- */
-static int zynqmp_r5_rproc_init(struct rproc *rproc)
-{
-	struct device *dev = rproc->dev.parent;
-	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
-
-	dev_dbg(dev, "%s\n", __func__);
-	enable_ipi(local);
-	return 0;
-}
-
 static irqreturn_t r5_remoteproc_interrupt(int irq, void *dev_id)
 {
 	struct device *dev = dev_id;
@@ -633,12 +619,6 @@ static int zynqmp_r5_remoteproc_probe(struct platform_device *pdev)
 			goto rproc_fault;
 		}
 		dev_dbg(&pdev->dev, "notification irq: %d\n", local->irq);
-	}
-
-	ret = zynqmp_r5_rproc_init(local->rproc);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to init ZynqMP R5 rproc\n");
-		goto rproc_fault;
 	}
 
 	rproc->auto_boot = autoboot;
