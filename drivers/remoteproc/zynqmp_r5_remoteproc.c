@@ -2,7 +2,7 @@
 /*
  * Zynq R5 Remote Processor driver
  *
- * Copyright (C) 2015 Xilinx, Inc.
+ * Copyright (C) 2018 Xilinx, Inc.
  *
  */
 
