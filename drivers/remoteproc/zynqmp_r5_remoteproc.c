@@ -6,25 +6,23 @@
  *
  */
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/err.h>
-#include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
-#include <linux/remoteproc.h>
+#include <linux/delay.h>
+#include <linux/err.h>
+#include <linux/firmware/xlnx-zynqmp.h>
+#include <linux/genalloc.h>
+#include <linux/idr.h>
 #include <linux/interrupt.h>
+#include <linux/kernel.h>
+#include <linux/list.h>
+#include <linux/module.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
+#include <linux/platform_device.h>
+#include <linux/remoteproc.h>
 #include <linux/slab.h>
-#include <linux/cpu.h>
-#include <linux/delay.h>
-#include <linux/list.h>
-#include <linux/genalloc.h>
-#include <linux/pfn.h>
-#include <linux/idr.h>
-#include <linux/firmware/xlnx-zynqmp.h>
 
 #include "remoteproc_internal.h"
 
