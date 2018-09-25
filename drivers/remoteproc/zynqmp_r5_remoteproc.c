@@ -122,28 +122,6 @@ static void r5_mode_config(struct zynqmp_r5_rproc_pdata *pdata)
 }
 
 /**
- * r5_release_tcm() - release TCM
- * @pdata: platform data
- *
- * Release TCM
- */
-static void r5_release_tcm(struct zynqmp_r5_rproc_pdata *pdata)
-{
-	const struct zynqmp_eemi_ops *eemi = zynqmp_pm_get_eemi_ops();
-	int i;
-
-	if (!eemi || !eemi->release_node) {
-		pr_err("Failed to release TCM\n");
-		return;
-	}
-
-	for (i = 0; i < MAX_TCM_PNODES; i++) {
-		if (pdata->tcm_pnode_id[i] != 0)
-			eemi->release_node(pdata->tcm_pnode_id[i]);
-	}
-}
-
-/**
  * disable_ipi - disable IPI
  * @pdata: platform data
  *
@@ -205,8 +183,6 @@ static int zynqmp_r5_rproc_start(struct rproc *rproc)
 	enum rpu_boot_mem bootmem;
 	const struct zynqmp_eemi_ops *eemi = local->eemi;
 
-	dev_dbg(dev, "%s\n", __func__);
-
 	/* Set up R5 */
 	if ((rproc->bootaddr & 0xF0000000) == 0xF0000000)
 		bootmem = PM_RPU_BOOTMEM_HIVEC;
@@ -250,7 +226,6 @@ static int zynqmp_r5_rproc_stop(struct rproc *rproc)
 {
 	struct device *dev = rproc->dev.parent;
 	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
-	struct rproc_mem_entry *mem, *nmem;
 	const struct zynqmp_eemi_ops *eemi = local->eemi;
 
 	dev_dbg(dev, "%s\n", __func__);
@@ -260,30 +235,6 @@ static int zynqmp_r5_rproc_stop(struct rproc *rproc)
 			      ZYNQMP_PM_REQUEST_ACK_BLOCKING);
 
 	return 0;
-}
-
-static void *zynqmp_r5_rproc_da_to_va(struct rproc *rproc, u64 da, int len)
-{
-	struct rproc_mem_entry *mem;
-	void *va = NULL;
-	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
-
-	list_for_each_entry(mem, &local->mems, node) {
-		int offset = da - mem->da;
-
-		/* try next carveout if da is too small */
-		if (offset < 0)
-			continue;
-
-		/* try next carveout if da is too large */
-		if (offset + len > mem->len)
-			continue;
-
-		va = mem->va + offset;
-
-		break;
-	}
-	return va;
 }
 
 static int zynqmp_r5_parse_fw(struct rproc *rproc, const struct firmware *fw)
@@ -302,7 +253,7 @@ static struct rproc_ops zynqmp_r5_rproc_ops = {
 	.start		= zynqmp_r5_rproc_start,
 	.stop		= zynqmp_r5_rproc_stop,
 	.kick		= zynqmp_r5_rproc_kick,
-	.da_to_va       = zynqmp_r5_rproc_da_to_va,
+	.parse_fw	= zynqmp_r5_parse_fw,
 };
 
 static irqreturn_t r5_remoteproc_interrupt(int irq, void *dev_id)
@@ -325,6 +276,75 @@ static irqreturn_t r5_remoteproc_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+/* zynqmp_r5_tcm_alloc() - Allocate TCM memories
+ *
+ * @rproc: pointer to the remoteproc instance
+ * @mem: pointer to the remoteproc memory entry
+ *
+ * Return 0 for success, negative value for failure
+ */
+static int zynqmp_r5_tcm_alloc(struct rproc *rproc,
+			       struct rproc_mem_entry *mem)
+{
+	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
+	struct device *dev = rproc->dev.parent;
+	const struct zynqmp_eemi_ops *eemi = local->eemi;
+	int tcm_id;
+
+	if (mem->da == 0x0)
+		tcm_id = 0;
+	else
+		tcm_id = 1;
+
+	while (tcm_id < MAX_TCM_PNODES) {
+		int ret;
+
+		ret = eemi->request_node(local->tcm_pnode_id[tcm_id],
+					 ZYNQMP_PM_CAPABILITY_ACCESS, 0,
+					 ZYNQMP_PM_REQUEST_ACK_BLOCKING
+					);
+		if (ret < 0) {
+			dev_err(dev, "Failed to request TCM: %u\n",
+				local->tcm_pnode_id[tcm_id]);
+			return ret;
+		}
+		if (mem->len > 0x10000)
+			tcm_id += 2;
+		else
+			break;
+	}
+	return 0;
+}
+
+/* zynqmp_r5_tcm_release() - Release TCM memories
+ *
+ * @rproc: pointer to the remoteproc instance
+ * @mem: pointer to the remoteproc memory entry
+ *
+ * Return 0 for success, negative value for failure
+ */
+static int zynqmp_r5_tcm_release(struct rproc *rproc,
+			         struct rproc_mem_entry *mem)
+{
+	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
+	const struct zynqmp_eemi_ops *eemi = local->eemi;
+	int tcm_id;
+
+	if (mem->da == 0x0)
+		tcm_id = 0;
+	else
+		tcm_id = 1;
+
+	while (tcm_id < MAX_TCM_PNODES) {
+		eemi->release_node(local->tcm_pnode_id[tcm_id]);
+		if (mem->len > 0x10000)
+			tcm_id += 2;
+		else
+			break;
+	}
+	return 0;
+}
+
 /* zynqmp_r5_get_tcm_memories() - get tcm memories
  * @pdev: pointer to the platform device
  * @pdata: pointer to the remoteproc private data
@@ -337,42 +357,27 @@ static int zynqmp_r5_get_tcms(struct platform_device *pdev,
 	static const char * const mem_names[] = {"tcm_a", "tcm_b"};
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
+	struct rproc *rproc = pdata->rproc;
 	int num_mems = 0;
-	int i, ret;
+	int i;
 	struct property *prop;
 	const __be32 *cur;
 	u32 val;
-	const struct zynqmp_eemi_ops *eemi = pdata->eemi;
 
 	/* Get TCM power node ids */
 	i = 0;
 	of_property_for_each_u32(np, "tcm-pnode-id", prop, cur, val)
 		pdata->tcm_pnode_id[i++] = val;
 
-	/* Request TCMs */
-	for (i = 0; i < MAX_TCM_PNODES; i++) {
-		if (pdata->tcm_pnode_id[i] != 0) {
-			ret = eemi->request_node(pdata->tcm_pnode_id[i],
-						 ZYNQMP_PM_CAPABILITY_ACCESS, 0,
-						 ZYNQMP_PM_REQUEST_ACK_BLOCKING
-						);
-			if (ret < 0) {
-				dev_err(dev, "failed to request TCM: %u\n",
-					pdata->tcm_pnode_id[i]);
-				return ret;
-			}
-			dev_dbg(dev, "request tcm pnode: %u\n",
-				pdata->tcm_pnode_id[i]);
-		} else {
-			break;
-		}
-	}
 	/* Create remoteproc memories entries for TCM memories */
 	num_mems = ARRAY_SIZE(mem_names);
 	for (i = 0; i < num_mems; i++) {
 		struct resource *res;
 		struct rproc_mem_entry *mem;
+		void *va;
 		dma_addr_t dma;
+		u32 da;
+		int len;
 		resource_size_t size;
 
 		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
@@ -383,23 +388,30 @@ static int zynqmp_r5_get_tcms(struct platform_device *pdev,
 			return -ENOMEM;
 		/* Map it as normal memory */
 		size = resource_size(res);
-		mem->va = devm_ioremap_wc(dev, res->start, size);
-		mem->len = size;
+		len = (int)size;
+		va = devm_ioremap_wc(dev, res->start, size);
+		if (!va) {
+			dev_err(dev, "Unable to map memory region: %pa+%x\n",
+				&res->start, len);
+			return -ENOMEM;
+		}
 		dma = (dma_addr_t)res->start;
-		mem->dma = dma;
 		/* TCM memory:
 		 *   TCM_0: da 0 <-> global addr 0xFFE00000
 		 *   TCM_1: da 0 <-> global addr 0xFFE90000
 		 */
-		if ((dma & 0xFFF00000) == 0xFFE00000) {
-			if ((dma & 0xFFF80000) == 0xFFE80000)
-				mem->da -= 0x90000;
-			else
-				mem->da = (dma & 0x000FFFFF);
-		}
+		da = dma & 0x000FFFFF;
+		if (da & 0x80000)
+			da -= 0x90000;
 		dev_dbg(dev, "%s: va = %p, da = 0x%x dma = 0x%llx\n",
-			__func__, mem->va, mem->da, mem->dma);
-		list_add_tail(&mem->node, &pdata->mems);
+			__func__, va, da, dma);
+		mem = rproc_mem_entry_init(dev, va, dma, len, da,
+					   zynqmp_r5_tcm_alloc,
+					   zynqmp_r5_tcm_release,
+					   mem_names[i]);
+		if (!mem)
+			return -ENOMEM;
+		rproc_add_carveout(rproc, mem);
 	}
 	return 0;
 }
@@ -416,6 +428,7 @@ static int zynqmp_r5_get_reserved_mems(struct platform_device *pdev,
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
+	struct rproc *rproc = pdata->rproc;
 	int num_mems;
 	int i;
 
@@ -427,15 +440,18 @@ static int zynqmp_r5_get_reserved_mems(struct platform_device *pdev,
 		struct resource res;
 		resource_size_t size;
 		struct rproc_mem_entry *mem;
-		int ret;
+		void *va;
+		dma_addr_t dma;
+		u32 da;
+		const char *name;
+		int len, ret;
 
 		node = of_parse_phandle(np, "memory-region", i);
 		ret = of_device_is_compatible(node, "rproc-prog-memory");
 		if (!ret) {
 			/* it is DMA memory. */
 			dev_info(dev, "%s, dma memory %d\n", __func__, i);
-			ret = of_reserved_mem_device_init_by_idx(dev,
-								 np, i);
+			ret = of_reserved_mem_device_init_by_idx(dev, np, i);
 			if (ret) {
 				dev_err(dev, "unable to reserve DMA mem.\n");
 				return ret;
@@ -453,13 +469,23 @@ static int zynqmp_r5_get_reserved_mems(struct platform_device *pdev,
 			return -ENOMEM;
 		/* Map it as normal memory */
 		size = resource_size(&res);
-		mem->va = devm_ioremap_wc(dev, res.start, size);
-		mem->len = size;
-		mem->dma = (dma_addr_t)res.start;
-		mem->da = (u32)res.start;
-		dev_dbg(dev, "%s: va = %p, da = 0x%x dma = 0x%llx\n",
-			__func__, mem->va, mem->da, mem->dma);
-		list_add_tail(&mem->node, &pdata->mems);
+		len = (int)size;
+		va = devm_ioremap_wc(dev, res.start, size);
+		if (!va) {
+			dev_err(dev, "Unable to map memory region: %pa+%x\n",
+				&res.start, len);
+			return -ENOMEM;
+		}
+		dma = (dma_addr_t)res.start;
+		da = (u32)res.start;
+		name = of_node_full_name(node);
+		dev_dbg(dev, "%s: mem %s, va = %p, da = 0x%x dma = 0x%llx\n",
+			__func__, name, va, da, dma);
+		mem = rproc_mem_entry_init(dev, va, dma, len, da,
+					   NULL, NULL, name);
+		if (!mem)
+			return -ENOMEM;
+		rproc_add_carveout(rproc, mem);
 	}
 	return 0;
 }
@@ -481,7 +507,7 @@ static int zynqmp_r5_check_eemi_ops(struct zynqmp_r5_rproc_pdata *pdata)
 		pr_err("%s: missing eemi request/release node operation\n",
 		       __func__);
 		return -ENXIO;
-	} else if (!eemi->wakeup || !eemi->force_shutdown) {
+	} else if (!eemi->request_wakeup || !eemi->force_powerdown) {
 		pr_err("%s: missing eemi wakeup/shutdown operation\n",
 		       __func__);
 		return -ENXIO;
@@ -582,7 +608,6 @@ static int zynqmp_r5_remoteproc_probe(struct platform_device *pdev)
 	}
 	dev_dbg(&pdev->dev, "got ipi base address\n");
 
-	INIT_LIST_HEAD(&local->mems);
 	/* Get TCM memories */
 	ret = zynqmp_r5_get_tcms(pdev, local);
 	if (ret < 0) {
@@ -640,20 +665,10 @@ rproc_fault:
 static int zynqmp_r5_remoteproc_remove(struct platform_device *pdev)
 {
 	struct rproc *rproc = platform_get_drvdata(pdev);
-	struct zynqmp_r5_rproc_pdata *local = rproc->priv;
-	struct rproc_mem_entry *mem;
 
 	dev_info(&pdev->dev, "%s\n", __func__);
 
 	rproc_del(rproc);
-
-	list_for_each_entry(mem, &local->mems, node) {
-		if (mem->priv)
-			gen_pool_free((struct gen_pool *)mem->priv,
-				      (unsigned long)mem->va, mem->len);
-	}
-
-	r5_release_tcm(local);
 	of_reserved_mem_device_release(&pdev->dev);
 	rproc_free(rproc);
 
