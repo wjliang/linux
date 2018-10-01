@@ -889,6 +889,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	mutex_init(&vrp->tx_lock);
 	init_waitqueue_head(&vrp->sendq);
 
+	dev_dbg(&vdev->dev, "%s 0\n", __func__);
 	/* We expect two virtqueues, rx and tx (and in this order) */
 	err = virtio_find_vqs(vdev, 2, vqs, vq_cbs, names, NULL);
 	if (err)
@@ -897,10 +898,12 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	vrp->rvq = vqs[0];
 	vrp->svq = vqs[1];
 
+	dev_dbg(&vdev->dev, "%s 1\n", __func__);
 	/* we expect symmetric tx/rx vrings */
 	WARN_ON(virtqueue_get_vring_size(vrp->rvq) !=
 		virtqueue_get_vring_size(vrp->svq));
 
+	dev_dbg(&vdev->dev, "%s 2\n", __func__);
 	/* we need less buffers if vrings are small */
 	if (virtqueue_get_vring_size(vrp->rvq) < MAX_RPMSG_NUM_BUFS / 2)
 		vrp->num_bufs = virtqueue_get_vring_size(vrp->rvq) * 2;
@@ -911,10 +914,12 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	total_buf_space = vrp->num_bufs * vrp->buf_size;
 
+	dev_dbg(&vdev->dev, "%s 3\n", __func__);
 	/* allocate coherent memory for the buffers */
 	bufs_va = dma_alloc_coherent(vdev->dev.parent,
 				     total_buf_space, &vrp->bufs_dma,
 				     GFP_KERNEL);
+	dev_dbg(&vdev->dev, "%s 4\n", __func__);
 	if (!bufs_va) {
 		err = -ENOMEM;
 		goto vqs_del;
@@ -934,10 +939,13 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		struct scatterlist sg;
 		void *cpu_addr = vrp->rbufs + i * vrp->buf_size;
 
+		dev_dbg(&vdev->dev, "%s, sg init\n", __func__);
 		rpmsg_sg_init(&sg, cpu_addr, vrp->buf_size);
 
+		dev_dbg(&vdev->dev, "%s, add inbuf\n", __func__);
 		err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, cpu_addr,
 					  GFP_KERNEL);
+		dev_dbg(&vdev->dev, "%s, add inbuf, err:%d.\n", __func__, err);
 		WARN_ON(err); /* sanity check; this can't really happen */
 	}
 

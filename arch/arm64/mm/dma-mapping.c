@@ -478,6 +478,7 @@ static int __dummy_mapping_error(struct device *hwdev, dma_addr_t dma_addr)
 
 static int __dummy_dma_supported(struct device *hwdev, u64 mask)
 {
+	dev_info(hwdev, "%s, return 0\n", __func__);
 	return 0;
 }
 

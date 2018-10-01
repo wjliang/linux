@@ -517,6 +517,8 @@ static int rproc_handle_vdev(struct rproc *rproc, struct fw_rsc_vdev *rsc,
 	if (ret)
 		goto free_rvdev;
 
+	dev_info(&rvdev->dev, "%s set dev and dma, %x:%x.\n",
+		 __func__, rvdev->dev.coherent_dma_mask, DMA_BIT_MASK(32));
 	/* parse the vrings */
 	for (i = 0; i < rsc->num_of_vrings; i++) {
 		ret = rproc_parse_vring(rvdev, rsc, i);

@@ -513,6 +513,7 @@ static inline void *dma_alloc_attrs(struct device *dev, size_t size,
 	void *cpu_addr;
 
 	BUG_ON(!ops);
+	dev_info(dev, "%s mask 0x%x\n", __func__, dev->coherent_dma_mask);
 	WARN_ON_ONCE(dev && !dev->coherent_dma_mask);
 
 	if (dma_alloc_from_dev_coherent(dev, size, dma_handle, &cpu_addr))
@@ -589,10 +590,14 @@ static inline int dma_supported(struct device *dev, u64 mask)
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 
-	if (!ops)
+	if (!ops) {
+		dev_info(dev, "%s: no dma ops\n", __func__);
 		return 0;
-	if (!ops->dma_supported)
+	}
+	if (!ops->dma_supported) {
+		dev_info(dev, "%s: no dma_support function\n", __func__);
 		return 1;
+	}
 	return ops->dma_supported(dev, mask);
 }
 
@@ -621,8 +626,10 @@ int dma_set_coherent_mask(struct device *dev, u64 mask);
 #else
 static inline int dma_set_coherent_mask(struct device *dev, u64 mask)
 {
-	if (!dma_supported(dev, mask))
+	if (!dma_supported(dev, mask)) {
+		dev_err(dev, "%s, no DMA support.\n");
 		return -EIO;
+	}
 
 	dma_check_mask(dev, mask);
 

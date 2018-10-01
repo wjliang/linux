@@ -17,6 +17,7 @@
  * GNU General Public License for more details.
  */
 
+#define DEBUG
 #include <linux/dma-mapping.h>
 #include <linux/export.h>
 #include <linux/of_reserved_mem.h>
