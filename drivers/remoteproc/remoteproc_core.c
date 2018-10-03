@@ -511,7 +511,12 @@ static int rproc_handle_vdev(struct rproc *rproc, struct fw_rsc_vdev *rsc,
 	rvdev->dev.release = rproc_rvdev_release;
 	dev_set_name(&rvdev->dev, "%s#%s", dev_name(rvdev->dev.parent), name);
 	dev_set_drvdata(&rvdev->dev, rvdev);
-	dma_set_coherent_mask(&rvdev->dev, DMA_BIT_MASK(32));
+	ret = dma_coerce_mask_and_coherent(&rvdev->dev,
+					   dma_get_mask(&rproc->dev));
+	if (ret)
+		dev_warn(dev,
+			 "Failed to set DMA mask %llx. Trying to continue...\n",
+			 dma_get_mask(&rproc->dev));
 
 	ret = device_register(&rvdev->dev);
 	if (ret)
