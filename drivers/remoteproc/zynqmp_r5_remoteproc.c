@@ -648,12 +648,18 @@ static int zynqmp_r5_remoteproc_probe(struct platform_device *pdev)
 
 	rproc->auto_boot = autoboot;
 
+#if 0
+	ret = dma_coerce_mask_and_coherent(&rproc->dev, DMA_BIT_MASK(64));
+	if (ret) {
+		dev_err(&pdev->dev, "failed to set rproc dma mask\n");
+		goto rproc_fault;
+	}
+#endif
 	ret = rproc_add(local->rproc);
 	if (ret) {
 		dev_err(&pdev->dev, "rproc registration failed\n");
 		goto rproc_fault;
 	}
-
 	return ret;
 
 rproc_fault:
